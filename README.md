@@ -1,2 +1,118 @@
-# naver-map-crawler
-경기도 관공서 주변 카페/음식점 영업시간 수집기 (네이버 지도 크롤러)
+# 네이버 맵 크롤러
+
+경기도 관공서 주변 카페·음식점의 **영업시간 포함** 상세 정보를 수집하는 CLI 도구
+
+## 수집 필드
+
+| 필드 | 설명 | 예시 |
+|------|------|------|
+| name | 상호명 | 런던 수원인계점 |
+| address | 도로명주소 | 경기 수원시 팔달구 권광로180번길 18-11 |
+| phone | 전화번호 | 031-123-4567 |
+| category | 업종 | 카페,디저트 |
+| business_hours | 영업시간 | 다음 날 01:00에 영업 종료 |
+| visitor_reviews | 방문자 리뷰 수 | 방문자 리뷰 859 |
+| blog_reviews | 블로그 리뷰 수 | 166 |
+| naver_place_id | 네이버 플레이스 ID | 1568480811 |
+
+---
+
+## 설치
+
+```bash
+# 1. 가상환경 생성 및 활성화
+python -m venv venv
+source venv/bin/activate        # macOS/Linux
+venv\Scripts\activate           # Windows
+
+# 2. 의존성 설치
+pip install -r requirements.txt
+
+# 3. Playwright 브라우저 설치
+playwright install chromium
+```
+
+---
+
+## 사용법
+
+### 단일 검색
+
+```bash
+python crawler.py search "수원시청 카페" --output result.csv
+python crawler.py search "성남시청 음식점" --max 50 --output result.csv
+```
+
+### 배치 검색 (여러 지역)
+
+```bash
+python crawler.py batch regions.txt --max-per-query 30 --output 경기도_매장리스트.csv
+```
+
+**regions.txt 형식** (한 줄에 검색어 하나):
+```
+수원시청 카페
+수원시청 음식점
+성남시청 카페
+...
+```
+
+### 좌표 기반 검색 (P2)
+
+```bash
+python crawler.py nearby --lat 37.263 --lng 127.028 --radius 500 --category 카페
+```
+
+### 도움말
+
+```bash
+python crawler.py --help
+python crawler.py search --help
+python crawler.py batch --help
+```
+
+---
+
+## 실행 예시
+
+```
+$ python crawler.py batch regions.txt --max-per-query 30 --output 경기도_매장리스트.csv
+
+📋 배치 시작: 10개 쿼리  (쿼리당 최대 30개)
+──────────────────────────────────────────────────
+[1/10] 🔍 수원시청 카페
+   → 30개 place_id 수집 완료
+   [1/30] 1568480811 조회 중... ✅ 런던 수원인계점
+   ...
+✅ 287개 저장: 경기도_매장리스트.csv
+```
+
+---
+
+## 프로젝트 구조
+
+```
+naver-map-crawler/
+├── crawler.py          # CLI 진입점 (search / batch / nearby)
+├── searcher.py         # Step 1: 검색어 → place_id 목록 (Playwright)
+├── fetcher.py          # Step 2: place_id → 상세정보 (requests)
+├── exporter.py         # Step 3: CSV 저장 + 중복 제거
+├── requirements.txt
+├── regions.txt         # 배치 검색 쿼리 목록 (경기도 10개 지역)
+└── output/
+    └── 경기도_매장리스트.csv
+```
+
+### 동작 방식
+
+1. **searcher.py** — Playwright로 네이버 지도 검색 페이지 로드 후 `allSearch` API 응답을 네트워크 인터셉트해 place_id 추출
+2. **fetcher.py** — `requests`로 `/p/api/place/summary/{place_id}` 직접 호출해 8개 필드 파싱
+3. **exporter.py** — `pandas`로 `utf-8-sig` CSV 저장 (Excel 한글 호환), name+address 기준 중복 제거
+
+---
+
+## 주의사항
+
+- 요청 간 0.5~1.0초 딜레이가 자동 적용됩니다
+- 과도한 반복 실행 시 IP 차단이 발생할 수 있습니다
+- 수집 데이터는 내부 마케팅 목적으로만 사용하세요 (네이버 이용약관 확인 필요)

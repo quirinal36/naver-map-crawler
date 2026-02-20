@@ -19,33 +19,37 @@ USER_AGENT = (
     "Chrome/120.0.0.0 Safari/537.36"
 )
 
-# place_id를 포함할 가능성이 있는 응답 URL 패턴
-CANDIDATE_URL_PATTERNS = ["search", "place", "list", "query"]
-
-# JSON 응답에서 place_id를 재귀적으로 탐색하는 키 이름들
-PLACE_ID_KEYS = {"id", "placeId", "place_id", "businessId"}
-
-
-def _extract_ids_from_obj(obj, found: set):
-    """JSON 객체를 재귀 탐색하여 place_id 후보를 수집"""
-    if isinstance(obj, dict):
-        for k, v in obj.items():
-            if k in PLACE_ID_KEYS and isinstance(v, str) and v.isdigit() and len(v) >= 7:
-                found.add(v)
-            else:
-                _extract_ids_from_obj(v, found)
-    elif isinstance(obj, list):
-        for item in obj:
-            _extract_ids_from_obj(item, found)
+def _ids_from_all_search(body: dict) -> list[str]:
+    """allSearch 응답의 result.place.list[].id 직접 파싱"""
+    ids = []
+    place_list = (
+        body.get("result", {}).get("place", {}).get("list", [])
+        or body.get("result", {}).get("place", {}).get("filterList", [])
+        or []
+    )
+    for item in place_list:
+        pid = str(item.get("id", "")).strip()
+        if pid.isdigit() and len(pid) >= 7:
+            ids.append(pid)
+    return ids
 
 
-async def _scroll_and_collect(page, place_ids: list, max_count: int, timeout: float = 8.0):
-    """무한스크롤로 추가 결과 로드"""
+async def _scroll_and_collect(page, place_ids: list, max_count: int, timeout: float = 12.0):
+    """검색 결과 패널 무한스크롤로 추가 결과 로드"""
     elapsed = 0.0
     interval = 1.5
     while len(place_ids) < max_count and elapsed < timeout:
         prev = len(place_ids)
-        await page.evaluate("window.scrollTo(0, document.body.scrollHeight)")
+        # 검색 결과 목록 패널 스크롤 (네이버 지도 특정 선택자)
+        await page.evaluate("""
+            () => {
+                const panel = document.querySelector('#_pcmap_list_scroll_container')
+                           || document.querySelector('.search_listview')
+                           || document.querySelector('[class*="searchListView"]');
+                if (panel) panel.scrollTop = panel.scrollHeight;
+                else window.scrollTo(0, document.body.scrollHeight);
+            }
+        """)
         await asyncio.sleep(interval)
         elapsed += interval
         if len(place_ids) == prev:
@@ -90,17 +94,11 @@ async def search_place_ids(query: str, max_count: int = 30, headless: bool = Tru
         async def on_response(response):
             if len(place_ids) >= max_count:
                 return
-            url = response.url.lower()
-            if not any(pat in url for pat in CANDIDATE_URL_PATTERNS):
-                return
-            content_type = response.headers.get("content-type", "")
-            if "json" not in content_type:
+            if "allSearch" not in response.url:
                 return
             try:
                 body = await response.json()
-                found: set[str] = set()
-                _extract_ids_from_obj(body, found)
-                for pid in found:
+                for pid in _ids_from_all_search(body):
                     if pid not in seen:
                         seen.add(pid)
                         place_ids.append(pid)
